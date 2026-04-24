@@ -1,0 +1,10 @@
+{
+  "name": "AutoReport AI 智能报告工作台",
+  "description": "面向非技术用户的自动化研究报告工作台，现已接入 SmartAnalyst 本地后端，支持注册、登录、上传文件、候选图选择与报告下载。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "多文件上传与任务轮询",
+    "候选图选择与最终报告生成",
+    "报告与辅助产物下载"
+  ]
+}

@@ -1,0 +1,51 @@
+services:
+  nginx:
+    build:
+      context: ../autoreport-ai-智能报告工作台
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_CAPTCHA_ENABLED: ${VITE_CAPTCHA_ENABLED:-false}
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../SmartAnalyst
+      dockerfile: Dockerfile
+    env_file:
+      - ${SMARTANALYST_ENV_FILE:-./.env.production}
+    command: sh -c "alembic upgrade head && uvicorn service.api:app --host 0.0.0.0 --port 8000 --proxy-headers"
+    restart: unless-stopped
+
+  worker-analysis:
+    build:
+      context: ../SmartAnalyst
+      dockerfile: Dockerfile
+    env_file:
+      - ${SMARTANALYST_ENV_FILE:-./.env.production}
+    command: celery -A service.celery_app.celery_app worker -Q analysis -c ${ANALYSIS_WORKER_CONCURRENCY:-2} -n analysis@%h
+    restart: unless-stopped
+
+  worker-render:
+    build:
+      context: ../SmartAnalyst
+      dockerfile: Dockerfile
+    env_file:
+      - ${SMARTANALYST_ENV_FILE:-./.env.production}
+    command: celery -A service.celery_app.celery_app worker -Q render -c ${RENDER_WORKER_CONCURRENCY:-1} -n render@%h
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: ../SmartAnalyst
+      dockerfile: Dockerfile
+    env_file:
+      - ${SMARTANALYST_ENV_FILE:-./.env.production}
+    command: celery -A service.celery_app.celery_app beat --loglevel=INFO
+    restart: unless-stopped
