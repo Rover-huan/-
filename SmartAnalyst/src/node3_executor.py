@@ -394,30 +394,40 @@ Raw dataset head snapshots before cleaning:
 Rules:
 1. Use only the injected `datasets` dictionary. Do not read any files.
 2. You must load only the datasets listed in `required_datasets`.
-3. After loading or merging the assigned datasets, create a local working DataFrame named `df`.
-4. Write preprocessing first, then plotting.
-5. Create `column_rename_map` to rename English or awkward raw columns into professional Chinese column names.
-6. You must create both `df_clean` and `data_plot`.
-7. The preprocessing block must include these exact lines somewhere:
+3. You must access real data with literal dataset-name lookups, exactly like:
+   df = datasets['精确文件名'].copy()
+   For a single-table task, the first working DataFrame line must be `df = datasets['the exact required dataset filename'].copy()`.
+   For a multi-table task, load every required dataset with its literal file name before merging, for example:
+   df1 = datasets['文件名1'].copy()
+   df2 = datasets['文件名2'].copy()
+4. Do not use `datasets.get(...)` instead of literal lookups. Do not use variable lookups such as `datasets[name]`, `datasets[dataset_name]`, or `next(iter(datasets.values()))` as the only dataset access.
+5. Do not invent the main data with `pd.DataFrame(...)`, lists, dictionaries, or hard-coded rows. You may only create derived DataFrames from real loaded datasets.
+6. Do not assume a global `df` already exists. Do not write explanation-only code. Every chart script must read at least one real dataset from `datasets`.
+7. If the planned chart is unsuitable for the assigned data, still build a simple fallback chart from real columns in a real loaded dataset.
+8. After loading or merging the assigned datasets, create a local working DataFrame named `df`.
+9. Write preprocessing first, then plotting.
+10. Create `column_rename_map` to rename English or awkward raw columns into professional Chinese column names.
+11. You must create both `df_clean` and `data_plot`.
+12. The preprocessing block must include these exact lines somewhere:
    print(df.shape)
    print(df.info())
    print(df.head())
-8. Use these exact section markers:
+13. Use these exact section markers:
    {prep_start}
    {prep_end}
    {plot_start}
    {plot_end}
-9. You must save the chart with this exact call:
+14. You must save the chart with this exact call:
    plt.savefig(output_image_path, dpi=300, bbox_inches='tight')
-10. You must define these strings:
+15. You must define these strings:
    analysis_result_text
    cleaning_summary_text
    problem_solution_text
    reflection_hint_text
-11. Make `problem_solution_text` describe a real data-cleaning difficulty and fix.
-12. Do not write any `import ...` or `from ... import ...` statements. Use the preloaded `pd`, `np`, `plt`, and `math` objects directly.
-13. Do not use try/except. Do not define functions. Output code only.
-14. Never over-filter into an empty chart. Before saving, `data_plot` must still contain rows. If you use `x_data` and `y_data`, they must stay non-empty too.
+16. Make `problem_solution_text` describe a real data-cleaning difficulty and fix.
+17. Do not write any `import ...` or `from ... import ...` statements. Use the preloaded `pd`, `np`, `plt`, and `math` objects directly.
+18. Do not use try/except. Do not define functions. Output code only.
+19. Never over-filter into an empty chart. Before saving, `data_plot` must still contain rows. If you use `x_data` and `y_data`, they must stay non-empty too.
 """.strip()
 
 STRICT_REPAIR_USER_PROMPT_TEMPLATE = """
@@ -460,32 +470,43 @@ Previous failed code:
 Repair requirements:
 1. Use only the injected `datasets` dictionary and only the datasets listed in `required_datasets`.
 2. Load the assigned datasets first, then create a local working DataFrame named `df` by copying a single table or merging multiple tables.
-3. Keep the four-part flow: column renaming, cleaning, exploration output, plotting.
-4. You must still include:
+3. If the traceback contains "Generated code is missing required datasets access", this is a hard repair target:
+   - Insert literal `datasets` access lines at the start of the repaired code, before preprocessing or plotting.
+   - Use the real file names from `required_datasets`, not placeholders.
+   - For one dataset, use exactly this shape:
+     df = datasets['xxx.xlsx'].copy()
+   - For multiple datasets, load each one with a literal file name first, for example:
+     df1 = datasets['file1.xlsx'].copy()
+     df2 = datasets['file2.xlsx'].copy()
+   - Do not repair this error with `datasets.get(...)`, `datasets[name]`, `datasets[dataset_name]`, or `next(iter(datasets.values()))`.
+   - Do not invent the main data with `pd.DataFrame(...)`, lists, dictionaries, or hard-coded rows.
+   - If the original task is unsuitable for the data, build a simple fallback chart from real loaded dataset columns.
+4. Keep the four-part flow: column renaming, cleaning, exploration output, plotting.
+5. You must still include:
    print(df.shape)
    print(df.info())
    print(df.head())
-5. You must still use:
+6. You must still use:
    column_rename_map
    df_clean
    data_plot
-6. You must keep these exact markers:
+7. You must keep these exact markers:
    {prep_start}
    {prep_end}
    {plot_start}
    {plot_end}
-7. You must still define:
+8. You must still define:
    analysis_result_text
    cleaning_summary_text
    problem_solution_text
    reflection_hint_text
-8. You must save the chart with this exact call:
+9. You must save the chart with this exact call:
    plt.savefig(output_image_path, dpi=300, bbox_inches='tight')
-9. If the traceback mentions "Generated code contains disallowed import statements", "disallowed import", "import statements", or "from ... import", delete every `import ...` and `from ... import ...` line from the repaired code.
-10. Use the preloaded `pd`, `np`, `plt`, and `math` objects directly. If the previous code depended on an imported module, rewrite it with these objects or pure Python. Do not introduce any new import.
-11. Keep the original chart intent and visual quality; do not simplify the chart just because imports are forbidden.
-12. Do not use try/except. Do not define functions. Output code only.
-13. If the traceback contains `DataEmptyError` or `{data_empty_error_message}`, treat it as a hard repair target:
+10. If the traceback mentions "Generated code contains disallowed import statements", "disallowed import", "import statements", or "from ... import", delete every `import ...` and `from ... import ...` line from the repaired code.
+11. Use the preloaded `pd`, `np`, `plt`, and `math` objects directly. If the previous code depended on an imported module, rewrite it with these objects or pure Python. Do not introduce any new import.
+12. Keep the original chart intent and visual quality; do not simplify the chart just because imports are forbidden.
+13. Do not use try/except. Do not define functions. Output code only.
+14. If the traceback contains `DataEmptyError` or `{data_empty_error_message}`, treat it as a hard repair target:
    - Remove or relax the previous filtering condition that made `data_plot`, `x_data`, `y_data`, or `df_clean` empty.
    - Do not keep using `str.contains`, aggressive `dropna`, or assumed column names when they caused an empty `data_plot`.
    - Check that the working DataFrame is not empty before plotting.
@@ -494,7 +515,7 @@ Repair requirements:
    - Never return code that will plot an empty DataFrame again.
    - 修复时必须放宽或移除导致空数据的筛选条件，不要继续使用会产生空 `data_plot` 的 `str.contains`、过严 `dropna` 或错误列名假设。
    - 如果筛选后为空，必须退回到更宽松的数据选择或原始字段绘图，禁止再次返回会绘制空 dataframe 的代码。
-14. If the traceback mentions "Each task must save exactly one chart panel", "Detected 2 axes", "multiple axes", or "subplot", inspect the previous plotting code:
+15. If the traceback mentions "Each task must save exactly one chart panel", "Detected 2 axes", "multiple axes", or "subplot", inspect the previous plotting code:
    - If it created multiple independent subplot panels, merge the idea into one main chart panel.
    - Do not remove useful chart quality elements such as colorbar, legend, or a necessary shared auxiliary axis when they support one main chart.
    - Keep only one main chart panel and call `plt.savefig(output_image_path, dpi=300, bbox_inches='tight')` exactly once.

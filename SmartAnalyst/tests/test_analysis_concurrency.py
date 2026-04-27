@@ -241,7 +241,48 @@ def test_run_analysis_phase_emits_chart_events_with_durations(tmp_path: Path, mo
         assert isinstance(payload["duration_ms"], int)
 
 
-def test_run_analysis_phase_emits_chart_failed_and_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_run_analysis_phase_allows_partial_chart_failure_above_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    events = _patch_analysis_inputs(monkeypatch, task_count=4)
+    monkeypatch.setattr(
+        main,
+        "get_settings",
+        lambda: SimpleNamespace(runner_mode="subprocess", chart_generation_concurrency=1),
+    )
+
+    def fake_execute_task(*, datasets, task_plan, output_dir):
+        task_id = int(task_plan["task_id"])
+        if task_id == 2:
+            raise RuntimeError("chart failed")
+        return _result(task_id)
+
+    monkeypatch.setattr(main.node3_executor, "execute_task", fake_execute_task)
+
+    result = _run_phase(tmp_path, events)
+
+    assert [item["task_id"] for item in result["task_plans"]] == [1, 3, 4]
+    assert [item["task_id"] for item in result["results"]] == [1, 3, 4]
+
+    failed_payloads = [payload for event_type, _, payload in events if event_type == "analysis.chart_failed"]
+    assert len(failed_payloads) == 1
+    assert failed_payloads[0]["task_id"] == 2
+    assert failed_payloads[0]["error_type"] == "RuntimeError"
+    assert failed_payloads[0]["level"] == "warning"
+
+    partial_payloads = [
+        payload for event_type, _, payload in events if event_type == "analysis.chart_partial_success"
+    ]
+    assert len(partial_payloads) == 1
+    assert partial_payloads[0]["success_count"] == 3
+    assert partial_payloads[0]["failed_count"] == 1
+    assert partial_payloads[0]["minimum_required"] == 3
+    assert partial_payloads[0]["failed_task_ids"] == [2]
+
+
+def test_run_analysis_phase_raises_when_successful_chart_count_below_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     events = _patch_analysis_inputs(monkeypatch, task_count=2)
     monkeypatch.setattr(
         main,
@@ -257,13 +298,14 @@ def test_run_analysis_phase_emits_chart_failed_and_raises(tmp_path: Path, monkey
 
     monkeypatch.setattr(main.node3_executor, "execute_task", fake_execute_task)
 
-    with pytest.raises(RuntimeError, match="chart failed"):
+    with pytest.raises(main.node3_executor.ExecutorError, match="too few successful charts"):
         _run_phase(tmp_path, events)
 
     failed_payloads = [payload for event_type, _, payload in events if event_type == "analysis.chart_failed"]
     assert len(failed_payloads) == 1
     assert failed_payloads[0]["task_id"] == 2
     assert failed_payloads[0]["error_type"] == "RuntimeError"
+    assert failed_payloads[0]["level"] == "warning"
 
 
 def test_run_analysis_phase_inprocess_runner_degrades_to_serial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

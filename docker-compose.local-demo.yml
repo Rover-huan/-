@@ -1,0 +1,133 @@
+name: smartanalyst-local-demo
+
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - smartanalyst_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./SmartAnalyst
+      dockerfile: Dockerfile
+    env_file:
+      - path: ./.env.local-demo.example
+      - path: ./.env.local-demo
+        required: false
+    command: >
+      sh -c "alembic upgrade head &&
+      uvicorn service.api:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - smartanalyst_data:/app/data
+      - smartanalyst_storage:/app/storage
+      - smartanalyst_runs:/app/runs
+      - smartanalyst_outputs:/app/outputs
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  worker-analysis:
+    build:
+      context: ./SmartAnalyst
+      dockerfile: Dockerfile
+    env_file:
+      - path: ./.env.local-demo.example
+      - path: ./.env.local-demo
+        required: false
+    command: celery -A service.celery_app.celery_app worker -Q analysis -c ${ANALYSIS_WORKER_CONCURRENCY:-1} -n analysis@%h
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - smartanalyst_data:/app/data
+      - smartanalyst_storage:/app/storage
+      - smartanalyst_runs:/app/runs
+      - smartanalyst_outputs:/app/outputs
+    restart: unless-stopped
+
+  worker-render:
+    build:
+      context: ./SmartAnalyst
+      dockerfile: Dockerfile
+    env_file:
+      - path: ./.env.local-demo.example
+      - path: ./.env.local-demo
+        required: false
+    command: celery -A service.celery_app.celery_app worker -Q render -c ${RENDER_WORKER_CONCURRENCY:-1} -n render@%h
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - smartanalyst_data:/app/data
+      - smartanalyst_storage:/app/storage
+      - smartanalyst_runs:/app/runs
+      - smartanalyst_outputs:/app/outputs
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: ./SmartAnalyst
+      dockerfile: Dockerfile
+    env_file:
+      - path: ./.env.local-demo.example
+      - path: ./.env.local-demo
+        required: false
+    command: celery -A service.celery_app.celery_app beat --loglevel=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - smartanalyst_data:/app/data
+      - smartanalyst_storage:/app/storage
+      - smartanalyst_runs:/app/runs
+      - smartanalyst_outputs:/app/outputs
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: ./autoreport-ai-智能报告工作台
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_CAPTCHA_ENABLED: ${VITE_CAPTCHA_ENABLED:-false}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${LOCAL_DEMO_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./deploy/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    restart: unless-stopped
+
+volumes:
+  smartanalyst_data:
+  smartanalyst_storage:
+  smartanalyst_runs:
+  smartanalyst_outputs:
+  smartanalyst_redis:

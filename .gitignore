@@ -16,6 +16,8 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.local-demo.example
+!.env.*.example
 !*.env.example
 
 # Runtime files
@@ -29,8 +31,13 @@ logs/
 # SmartAnalyst local runtime/state
 SmartAnalyst/storage/
 SmartAnalyst/runs/
+SmartAnalyst/outputs/
+SmartAnalyst/.codex-logs/
 SmartAnalyst/smartanalyst.db
 SmartAnalyst/*.db
+*.db
+*.sqlite
+*.sqlite3
 
 # Generated artifacts
 *.docx

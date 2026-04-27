@@ -75,7 +75,7 @@ const JOB_STATUS_LABELS: Record<string, string> = {
   running_analysis: '正在分析',
   awaiting_selection: '等待选图',
   queued_render: '报告排队中',
-  rendering: '正在生成报告',
+  rendering: '最终报告生成中',
   completed: '已完成',
   failed: '失败',
   expired: '已过期',

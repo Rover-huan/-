@@ -14,6 +14,7 @@ if __package__ in {None, ""}:
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
 
+from service.config import get_settings
 from src.node1_scanner import llm_caller
 
 
@@ -36,6 +37,13 @@ SECTION_KEYS = {
 }
 TEXT_TOKEN_PATTERN = re.compile(
     "[A-Za-z_][A-Za-z0-9_ ()/-]{1,40}|[\u4e00-\u9fff][\u4e00-\u9fffA-Za-z0-9_()/-]{1,40}"
+)
+HEADING_NUMBER_PREFIX_PATTERN = re.compile(
+    r"^\s*[（(]?\s*(?:[一二三四五六七八九十]+|\d+)\s*[）).、．.]\s*"
+)
+GENERIC_ANALYSIS_TITLE_PATTERN = re.compile(
+    r"(?:候选图表\s*\d+\s*分析|图表\s*\d+\s*分析|Candidate\s*Chart\s*\d*|Chart\s*\d+\s*(?:Analysis)?)",
+    flags=re.IGNORECASE,
 )
 TITLE_STOP_WORDS = {
     "基于",
@@ -145,21 +153,24 @@ SYSTEM_PROMPT = """
 3. 全篇叙述优先使用第一人称复数的真实作业口吻，例如“我们在分析中发现……”“我们先对……进行了重命名”，不要写成 Notebook 导出说明，也不要写成 AI 口吻。
 4. section_1_intro 可以继续使用“一、引言与数据清洗说明”这类一级标题，但正文必须同时包含：数据来源说明、数据集字段概览、数据清洗过程概述、研究背景、一个明确的核心研究问题、本报告的综合研究主线，以及后续图表分析将围绕什么问题展开。
 5. 报告必须围绕一条清晰主线展开。若数据字段支持区域、就业、工资、人口、家庭等主题，应优先围绕“区域经济差异—劳动力流动—人口结构—家庭结构”这条链条收束，例如回答“地区经济发展差异如何影响就业稳定、工资水平与人口家庭结构？”；若当前数据不覆盖这些字段，则应基于真实字段建立等价的分析链条，不要硬编不存在的变量。
-6. section_2_analysis 必须是与图表数量一致的列表；每个对象都要包含正式的小标题和完整分析段落。每张图的 content 必须自然覆盖四层意思：研究问题（这张图回答什么）、图表发现（趋势、差异、异常或关系）、原因解释（结合字段含义、业务背景或经济/管理逻辑）、现实启示（对经营决策、用户理解、市场判断或后续分析的价值）。多个图表之间要体现递进逻辑：先看核心指标波动，再看群体或区域差异，再看工资/收入或发展水平，再看人口结构和家庭结构；如果当前任务不包含其中某一类，只按真实图表顺序建立相近的分析递进，不要虚构。
+6. section_2_analysis 必须是与图表数量一致的列表；每个对象都要包含正式、具体、可进入目录的小标题和完整分析段落。sub_title 必须根据该图的研究问题、变量含义和图表目的生成，长度约 12—35 个中文字符，不要硬编码“（一）（二）”，不要使用“候选图表1分析”“图表1分析”“Candidate Chart”“Chart 1”等内部候选图标签。每张图的 content 必须自然覆盖四层意思：研究问题（这张图回答什么）、图表发现（趋势、差异、异常或关系）、原因解释（结合字段含义、业务背景或经济/管理逻辑）、现实启示（对经营决策、用户理解、市场判断或后续分析的价值）。多个图表之间要体现递进逻辑：先看核心指标波动，再看群体或区域差异，再看工资/收入或发展水平，再看人口结构和家庭结构；如果当前任务不包含其中某一类，只按真实图表顺序建立相近的分析递进，不要虚构。
 7. section_3_mechanism 必须写成“综合机制分析”：不要泛泛总结所有图，而要围绕“区域经济差异—劳动力流动—人口结构—家庭结构”或当前数据可支持的等价链条，把多个图表之间的共同趋势、差异和相互印证关系串起来；要结合真实字段和图表发现解释背后的可能机制，避免空泛套话。
 8. section_4_reflection 必须严格是两个对象：
    第一项写“遇到的问题及解决方法”，内容要比普通图表说明更完整，应覆盖数据缺失、异常值、字段类型、字段命名、可视化选择、分析局限等方面；必须引用真实数据线索，优先使用真实字段名、缺失值数量、空值列、预处理输出或执行报错；
    第二项写“总结与思考”，必须包含本次分析的主要结论、报告价值、不足之处、后续可拓展方向，并把实际代码逻辑或清洗动作与经济理论、业务含义结合起来。
-9. 不要虚构数据中不存在的字段、数据来源、报错或具体数值。
-10. 不要在报告正文复述 preview_text 或 info_text 的原文；可以概括数据规模、字段类型、缺失值和清洗线索。
-11. 不要写“作为AI模型”“由AI生成”“根据提示词”等 AI 口吻，不要写过度模板化的空话。
-12. 对数据无法直接证明的外部背景，只能使用“可能”“或许”“从业务逻辑看”“可以推测”等谨慎表达，不要把推测写成确定事实。
-13. 不要编造数据来源或外部事件，例如不要擅自写“国家统计局”“疫情”“政策环境”等，除非输入信息中明确出现。
-14. 不要轻易使用“高度正相关”“显著相关”“强相关”“显著影响”等统计判断；如果没有相关系数、回归结果或显著性检验，只能写“呈现同向变化趋势”“存在一定关联”“从图中看二者可能具有同步变化关系”等谨慎表述。
-15. 图表分析要尽量结合本图字段和图形本身，不要写空泛行业套话。
-16. 反思部分要结合本次数据限制，例如字段缺失、样本范围、图表类型限制、未做统计检验等，不要只写通用模板。
-17. 如果 execution_errors 不为空，应尽量把至少一个真实报错或修复过程写进“遇到的问题及解决方法”。
-18. 所有章节标题都必须正式、学术、可直接用于 Word 目录。
+9. “遇到的问题及解决方法”中必须自然包含一段“关键代码与处理过程说明”。如果结构允许，可以用这个短语作为段内小标题；如果不适合单独成标题，就写成一个自然段。该段只解释数据分析 notebook 中关键代码的功能和目的，不要粘贴大段代码，不要解释 SmartAnalyst 后端源码。
+10. “关键代码与处理过程说明”应结合本次真实处理过程，从输入中的 prepare_code、plot_code、cleaning_summary、problem_solution、column_mapping、preprocessing 输出等线索中选择实际出现过的内容来写。例如 read_excel/read_csv 用于读取数据；rename 或 column_rename_map 用于把数字编码字段映射为中文变量名；drop_duplicates 用于删除重复行；isna/notna/dropna 或有效行筛选用于检查和处理缺失值；pd.to_numeric 用于将工资、失业率、人口、比重等字段转为数值型；str.strip 用于统一地区名称；merge 用于按地区或时间字段合并数据；month_order 或排序映射用于保证月份、年份顺序；matplotlib 或实际绘图库用于绘制折线图、柱状图、散点图等。只能写输入中真实出现或可由代码线索明确支持的处理动作，不要虚构未使用过的库、模型或算法。
+11. “关键代码与处理过程说明”必须保留一句统一说明：“完整可复现代码和每个 cell 的运行输出已保留在同步生成的 Jupyter Notebook 文件中。”这句话只应在该段统一出现一次，不要在每个图表小节重复出现。
+12. 不要虚构数据中不存在的字段、数据来源、报错或具体数值。
+13. 不要在报告正文复述 preview_text 或 info_text 的原文；可以概括数据规模、字段类型、缺失值和清洗线索。
+14. 不要写“作为AI模型”“由AI生成”“根据提示词”等 AI 口吻，不要写过度模板化的空话。
+15. 对数据无法直接证明的外部背景，只能使用“可能”“或许”“从业务逻辑看”“可以推测”等谨慎表达，不要把推测写成确定事实。
+16. 不要编造数据来源或外部事件，例如不要擅自写“国家统计局”“疫情”“政策环境”等，除非输入信息中明确出现。
+17. 不要轻易使用“高度正相关”“显著相关”“强相关”“显著影响”等统计判断；如果没有相关系数、回归结果或显著性检验，只能写“呈现同向变化趋势”“存在一定关联”“从图中看二者可能具有同步变化关系”等谨慎表述。
+18. 图表分析要尽量结合本图字段和图形本身，不要写空泛行业套话。
+19. 反思部分要结合本次数据限制，例如字段缺失、样本范围、图表类型限制、未做统计检验等，不要只写通用模板。
+20. 如果 execution_errors 不为空，应尽量把至少一个真实报错或修复过程写进“遇到的问题及解决方法”。
+21. 所有章节标题都必须正式、学术、可直接用于 Word 目录。
 """.strip()
 
 USER_PROMPT_TEMPLATE = """
@@ -182,19 +193,22 @@ USER_PROMPT_TEMPLATE = """
 
 补充要求：
 1. section_2_analysis 的条目数必须与任务结果数量一致。
-2. section_2_analysis 中每个 sub_title 都要体现学术化分析方向，不能只写“任务1”“任务2”。
+2. section_2_analysis 中每个 sub_title 都要体现学术化分析方向，不能只写“任务1”“任务2”，也不能写“候选图表1分析”“图表1分析”“Candidate Chart”“Chart 1”等内部候选图标签；标题编号由渲染器控制，sub_title 文本不要硬编码“（一）（二）”。
 3. section_1_intro 的 content 必须写成正式报告开篇，包含数据来源、字段概览、清洗概述、研究背景、核心研究问题、综合研究主线和后续图表分析问题。
 4. section_2_analysis 的每个 content 必须写成完整段落，按自然语言覆盖“研究问题、图表发现、原因解释、现实启示”，不要只写短结论；多个图表之间要体现递进逻辑，例如先看就业或核心指标波动，再看群体/区域差异，再看工资/收入或发展水平，再看人口结构和家庭结构。若实际图表不覆盖某类主题，只使用真实图表支持的递进关系。
 5. section_3_mechanism 必须围绕“区域经济差异—劳动力流动—人口结构—家庭结构”或当前数据可支持的等价链条收束，说明共同趋势、可能机制和研究主线，不要逐图复述。
 6. section_4_reflection 的第一项必须明确引用至少一个真实字段名、空值统计、预处理输出线索或执行报错；例如“Review Date 列格式不统一”“Reviews 列存在 18 个缺失值”“Price 列货币符号不统一”等写法。
 7. section_4_reflection 的第一项必须优先使用第一人称复数，例如“我们在分析中发现……”“我们在处理 Reviews 列时……”，并尽量覆盖数据缺失、异常值、字段类型、可视化选择、分析局限等方面。
-8. section_4_reflection 的第二项必须包含主要结论、报告价值、不足之处和后续可拓展方向，不能写成通用套话；同时要把字段处理、缺失值处理、分组统计或重命名等代码逻辑，与经济学或管理学解释结合起来。
-9. 如果 execution_errors 非空，第一项应尽量写出真实报错及修复动作，而不是泛泛而谈。
-10. 对无法由图表和字段直接证明的解释，只能用“可能”“或许”“从业务逻辑看”“可以推测”等谨慎表达，不要写成确定事实。
-11. 不要编造不存在的字段、数据来源、外部事件、报错或数值；不要复述 preview_text/info_text 原文；不要写“作为AI模型”；不要写过度模板化空话。
-12. 没有相关系数、回归结果或显著性检验时，不要写“高度正相关”“显著相关”“强相关”“显著影响”；可以写“呈现同向变化趋势”“存在一定关联”“从图中看二者可能具有同步变化关系”。
-13. 反思部分必须结合本次数据限制，例如字段缺失、样本范围、图表类型限制、未做统计检验等。
-14. 只返回 JSON 对象。
+8. section_4_reflection 的第一项还必须包含一段“关键代码与处理过程说明”。这段话应解释 notebook 中关键数据分析代码的功能和目的，而不是粘贴大段代码；语气要像本科量化分析结课报告，不要像技术文档。
+9. “关键代码与处理过程说明”只能基于输入中真实出现的 prepare_code、plot_code、cleaning_summary、problem_solution、column_mapping 或预处理输出线索来写。可以解释 read_excel/read_csv、rename/column_rename_map、drop_duplicates、isna/notna/dropna、pd.to_numeric、str.strip、merge、month_order/排序映射、matplotlib 或实际绘图库等处理动作，但只有在本次代码或线索支持时才写，不要虚构没有使用过的库、模型或算法。
+10. “关键代码与处理过程说明”中必须统一保留一句：“完整可复现代码和每个 cell 的运行输出已保留在同步生成的 Jupyter Notebook 文件中。”不要把这句话分散重复到每个图表小节。
+11. section_4_reflection 的第二项必须包含主要结论、报告价值、不足之处和后续可拓展方向，不能写成通用套话；同时要把字段处理、缺失值处理、分组统计或重命名等代码逻辑，与经济学或管理学解释结合起来。
+12. 如果 execution_errors 非空，第一项应尽量写出真实报错及修复动作，而不是泛泛而谈。
+13. 对无法由图表和字段直接证明的解释，只能用“可能”“或许”“从业务逻辑看”“可以推测”等谨慎表达，不要写成确定事实。
+14. 不要编造不存在的字段、数据来源、外部事件、报错或数值；不要复述 preview_text/info_text 原文；不要写“作为AI模型”；不要写过度模板化空话。
+15. 没有相关系数、回归结果或显著性检验时，不要写“高度正相关”“显著相关”“强相关”“显著影响”；可以写“呈现同向变化趋势”“存在一定关联”“从图中看二者可能具有同步变化关系”。
+16. 反思部分必须结合本次数据限制，例如字段缺失、样本范围、图表类型限制、未做统计检验等。
+17. 只返回 JSON 对象。
 """.strip()
 
 
@@ -234,6 +248,10 @@ class SynthesizerParseError(ValueError):
 
 class SynthesizerValidationError(ValueError):
     """Raised when the synthesizer response JSON is structurally invalid."""
+
+
+class ReportSynthesisModelError(RuntimeError):
+    """Raised when the draft report synthesis model call fails."""
 
 
 def _summarize_exception_chain(exc: BaseException) -> str:
@@ -390,8 +408,12 @@ def _validate_result_item(item: Any, index: int) -> dict[str, Any]:
         normalized[key] = _normalize_text(item[key], f"all_results[{index}]['{key}']")
 
     optional_string_keys = {
+        "chart_title",
+        "chart_type",
         "preprocessing_output_summary",
         "question_zh",
+        "research_question",
+        "title",
     }
     for key in optional_string_keys:
         value = item.get(key)
@@ -669,6 +691,75 @@ def _build_user_prompt(
     )
 
 
+def _is_section_2_count_mismatch_error(exc: BaseException) -> bool:
+    """Return True when the model returned the wrong number of selected chart sections."""
+    return (
+        isinstance(exc, SynthesizerValidationError)
+        and "Field 'section_2_analysis' must contain exactly" in str(exc)
+    )
+
+
+def _build_selected_chart_briefs(all_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build compact selected-chart context for a structure repair retry."""
+    briefs: list[dict[str, Any]] = []
+    for index, item in enumerate(all_results, start=1):
+        title = (
+            item.get("chart_title")
+            or item.get("research_question")
+            or item.get("question_zh")
+            or item.get("title")
+            or f"已选图表{index}"
+        )
+        briefs.append(
+            {
+                "selected_index": index,
+                "task_id": item.get("task_id"),
+                "title_or_question": str(title).strip(),
+                "question_zh": item.get("question_zh"),
+                "column_mapping": item.get("column_mapping", {}),
+            }
+        )
+    return briefs
+
+
+def _build_structure_repair_prompt(
+    *,
+    original_prompt: str,
+    validation_error: SynthesizerValidationError,
+    expected_count: int,
+    all_results: list[dict[str, Any]],
+) -> str:
+    """Build a one-shot repair prompt for section_2_analysis count mismatches."""
+    selected_chart_briefs = json.dumps(
+        _build_selected_chart_briefs(all_results),
+        ensure_ascii=False,
+        indent=2,
+    )
+    return f"""
+上一次正文初稿 JSON 输出未通过结构校验：
+{validation_error}
+
+请基于同一批已选图表重新生成完整报告 JSON。必须严格修复以下问题：
+1. 上一次输出的 section_2_analysis 数量错误。
+2. 当前用户实际选择了 exactly {expected_count} 张图。
+3. section_2_analysis 必须返回 exactly {expected_count} 个 item。
+4. 每个 item 必须按顺序对应一张已选图。
+5. 不要新增未选图。
+6. 不要遗漏已选图。
+7. 不要改变 JSON 顶层结构，仍然只包含 section_1_intro、section_2_analysis、section_3_mechanism、section_4_reflection。
+8. section_2_analysis 的 sub_title 不要使用“候选图表N分析”“图表N分析”“Candidate Chart”“Chart N”等内部标签。
+9. section_2_analysis 的 sub_title 不要硬编码“（一）（二）”，标题编号由渲染器负责。
+10. 不要在每个图表小节重复 Notebook 说明；Notebook 统一说明只允许出现在“关键代码与处理过程说明”中一次。
+11. 不要输出解释、markdown 或代码块，只返回合法 JSON 对象。
+
+已选图表清单如下，必须按 selected_index 顺序一一对应：
+{selected_chart_briefs}
+
+原始生成要求如下：
+{original_prompt}
+""".strip()
+
+
 def _validate_section_block(value: Any, field_name: str) -> SectionBlock:
     """Validate one titled major section."""
     if not isinstance(value, dict):
@@ -717,6 +808,89 @@ def _validate_section_item(value: Any, field_name: str, index: int) -> SectionIt
     }
 
 
+def _strip_heading_number(title: str) -> str:
+    """Remove renderer-owned numbering from a subsection title."""
+    return HEADING_NUMBER_PREFIX_PATTERN.sub("", title).strip()
+
+
+def _is_generic_analysis_title(title: str) -> bool:
+    """Return True for internal placeholder chart titles that should not enter the TOC."""
+    stripped = _strip_heading_number(title)
+    compact = re.sub(r"\s+", "", stripped)
+    return bool(GENERIC_ANALYSIS_TITLE_PATTERN.search(stripped) or GENERIC_ANALYSIS_TITLE_PATTERN.search(compact))
+
+
+def _clean_title_candidate(text: Any) -> str:
+    """Normalize one title candidate into a concise heading fragment."""
+    if not isinstance(text, str):
+        return ""
+    title = _strip_heading_number(re.sub(r"\s+", " ", text).strip())
+    title = GENERIC_ANALYSIS_TITLE_PATTERN.sub("", title).strip()
+    title = title.strip(" ：:，,。.；;？?！!、")
+    for source, target in (
+        ("是否存在", ""),
+        ("是否具有", ""),
+        ("是否呈现", ""),
+        ("如何影响", "影响"),
+        ("之间是否存在", "之间"),
+        ("之间的关系", "关系"),
+    ):
+        title = title.replace(source, target)
+    title = re.sub(r"\s+", "", title).strip(" ：:，,。.；;？?！!、")
+    if len(title) > 35:
+        title = title[:35].rstrip(" ：:，,。.；;？?！!、")
+    return title
+
+
+def _title_from_fields(result: dict[str, Any]) -> str:
+    """Build a fallback title from real mapped field names."""
+    field_names: list[str] = []
+    column_mapping = result.get("column_mapping", {})
+    if isinstance(column_mapping, dict):
+        for value in column_mapping.values():
+            field_name = str(value).strip()
+            if field_name and field_name not in field_names:
+                field_names.append(field_name)
+            if len(field_names) >= 2:
+                break
+    if len(field_names) >= 2:
+        return f"{field_names[0]}与{field_names[1]}关系分析"
+    if len(field_names) == 1:
+        return f"{field_names[0]}变化特征分析"
+    return "核心指标可视化分析"
+
+
+def _build_natural_analysis_title(result: dict[str, Any], index: int) -> str:
+    """Create a natural chart analysis title from task metadata."""
+    for key in ("chart_title", "research_question", "question_zh", "title"):
+        candidate = _clean_title_candidate(result.get(key))
+        if candidate and not _is_generic_analysis_title(candidate):
+            if not any(candidate.endswith(suffix) for suffix in ("分析", "比较", "对比", "特征", "关系", "走势", "趋势", "分布")):
+                candidate = f"{candidate}分析"
+            return candidate[:35].rstrip(" ：:，,。.；;？?！!、")
+
+    fallback = _clean_title_candidate(_title_from_fields(result))
+    if fallback and not _is_generic_analysis_title(fallback):
+        return fallback[:35].rstrip(" ：:，,。.；;？?！!、")
+    return f"核心指标可视化分析{index}"
+
+
+def _normalize_analysis_titles(
+    section_2_analysis: list[SectionItem],
+    analysis_title_sources: list[dict[str, Any]] | None,
+) -> list[SectionItem]:
+    """Ensure section 2 titles are TOC-ready and do not expose internal chart labels."""
+    normalized_items: list[SectionItem] = []
+    sources = analysis_title_sources or []
+    for index, item in enumerate(section_2_analysis, start=1):
+        title = _strip_heading_number(item["sub_title"])
+        source = sources[index - 1] if index - 1 < len(sources) else {}
+        if not title or _is_generic_analysis_title(title):
+            title = _build_natural_analysis_title(source, index)
+        normalized_items.append({"sub_title": title, "content": item["content"]})
+    return normalized_items
+
+
 def parse_synthesized_report(
     raw_response: str,
     task_count: int,
@@ -724,6 +898,7 @@ def parse_synthesized_report(
     problem_reference_terms: set[str],
     title_reference_terms: set[str],
     reflection_logic_terms: set[str],
+    analysis_title_sources: list[dict[str, Any]] | None = None,
 ) -> FinalReportData:
     """Parse and validate the synthesizer JSON response."""
     cleaned_response = clean_json_response(raw_response)
@@ -752,12 +927,13 @@ def parse_synthesized_report(
         raise SynthesizerValidationError("Field 'section_2_analysis' must be a list.")
     if len(raw_analysis) != task_count:
         raise SynthesizerValidationError(
-            f"Field 'section_2_analysis' must contain exactly {task_count} items."
+            f"Field 'section_2_analysis' must contain exactly {task_count} items; got {len(raw_analysis)}."
         )
     section_2_analysis = [
         _validate_section_item(item, "section_2_analysis", index)
         for index, item in enumerate(raw_analysis)
     ]
+    section_2_analysis = _normalize_analysis_titles(section_2_analysis, analysis_title_sources)
 
     raw_reflection = parsed["section_4_reflection"]
     if not isinstance(raw_reflection, list):
@@ -862,6 +1038,7 @@ def _build_deterministic_fallback_report(
     problem_reference_terms: set[str],
     title_reference_terms: set[str],
     reflection_logic_terms: set[str],
+    analysis_title_sources: list[dict[str, Any]] | None = None,
 ) -> FinalReportData:
     """Build a local report when upstream synthesis is blocked by content risk."""
     dataset_name = _compact_report_text(data_summary.get("dataset_name"), "当前数据文件", max_length=120)
@@ -975,6 +1152,29 @@ def _build_deterministic_fallback_report(
         problem_reference_terms=problem_reference_terms,
         title_reference_terms=title_reference_terms,
         reflection_logic_terms=reflection_logic_terms,
+        analysis_title_sources=analysis_title_sources or all_results,
+    )
+
+
+def _parse_report_response(
+    raw_response: str,
+    *,
+    task_count: int,
+    report_title: str,
+    problem_reference_terms: set[str],
+    title_reference_terms: set[str],
+    reflection_logic_terms: set[str],
+    analysis_title_sources: list[dict[str, Any]],
+) -> FinalReportData:
+    """Parse one model response using the current selected chart count."""
+    return parse_synthesized_report(
+        raw_response,
+        task_count=task_count,
+        report_title=report_title,
+        problem_reference_terms=problem_reference_terms,
+        title_reference_terms=title_reference_terms,
+        reflection_logic_terms=reflection_logic_terms,
+        analysis_title_sources=analysis_title_sources,
     )
 
 
@@ -1015,34 +1215,127 @@ def synthesize_report(
             response_format={"type": "json_object"},
         )
     except Exception as exc:
-        if not _is_content_risk_error(exc):
-            raise
-        LOGGER.warning(
-            "Render synthesis triggered DeepSeek Content Exists Risk; using deterministic fallback report. "
-            "task_count=%s; error_summary=%s",
+        error_summary = _summarize_exception_chain(exc)
+        settings = get_settings()
+        if settings.report_synthesis_deterministic_fallback_enabled:
+            LOGGER.warning(
+                "Report synthesis model call failed; using deterministic fallback report because "
+                "REPORT_SYNTHESIS_DETERMINISTIC_FALLBACK_ENABLED=true. task_count=%s; "
+                "is_content_risk=%s; error_summary=%s",
+                len(normalized_results),
+                _is_content_risk_error(exc),
+                error_summary,
+            )
+            return _build_deterministic_fallback_report(
+                all_results=normalized_results,
+                data_summary=normalized_data_summary,
+                report_title=normalized_report_title,
+                execution_errors=normalized_execution_errors,
+                problem_reference_terms=problem_reference_terms,
+                title_reference_terms=title_reference_terms,
+                reflection_logic_terms=reflection_logic_terms,
+                analysis_title_sources=normalized_results,
+            )
+
+        LOGGER.error(
+            "Report synthesis model service error; failing render so the user can retry report generation. "
+            "analysis_completed=true; selected_charts_preserved=true; task_count=%s; "
+            "is_content_risk=%s; error_summary=%s",
             len(normalized_results),
-            _summarize_exception_chain(exc),
+            _is_content_risk_error(exc),
+            error_summary,
         )
-        return _build_deterministic_fallback_report(
-            all_results=normalized_results,
-            data_summary=normalized_data_summary,
-            report_title=normalized_report_title,
-            execution_errors=normalized_execution_errors,
-            problem_reference_terms=problem_reference_terms,
-            title_reference_terms=title_reference_terms,
-            reflection_logic_terms=reflection_logic_terms,
-        )
+        raise ReportSynthesisModelError(
+            "model_service_error: report synthesis model service failed during draft report generation; "
+            f"please retry report generation. upstream_error={error_summary}"
+        ) from exc
 
     try:
-        final_report_data = parse_synthesized_report(
+        final_report_data = _parse_report_response(
             raw_response,
             task_count=len(normalized_results),
             report_title=normalized_report_title,
             problem_reference_terms=problem_reference_terms,
             title_reference_terms=title_reference_terms,
             reflection_logic_terms=reflection_logic_terms,
+            analysis_title_sources=normalized_results,
         )
-    except (SynthesizerParseError, SynthesizerValidationError):
+    except SynthesizerValidationError as exc:
+        if not _is_section_2_count_mismatch_error(exc):
+            LOGGER.exception("Synthesizer response parsing or validation failed.")
+            raise
+
+        LOGGER.warning(
+            "Report synthesis output validation failed due to section_2_analysis item count mismatch; "
+            "retrying structure repair once. expected_count=%s; error=%s",
+            len(normalized_results),
+            exc,
+        )
+        repair_prompt = _build_structure_repair_prompt(
+            original_prompt=user_prompt,
+            validation_error=exc,
+            expected_count=len(normalized_results),
+            all_results=normalized_results,
+        )
+        try:
+            repaired_response = llm_caller(
+                prompt=repair_prompt,
+                system_prompt=SYSTEM_PROMPT,
+                response_format={"type": "json_object"},
+            )
+            final_report_data = _parse_report_response(
+                repaired_response,
+                task_count=len(normalized_results),
+                report_title=normalized_report_title,
+                problem_reference_terms=problem_reference_terms,
+                title_reference_terms=title_reference_terms,
+                reflection_logic_terms=reflection_logic_terms,
+                analysis_title_sources=normalized_results,
+            )
+        except (SynthesizerParseError, SynthesizerValidationError) as repair_exc:
+            settings = get_settings()
+            if settings.report_synthesis_deterministic_fallback_enabled:
+                LOGGER.warning(
+                    "Report synthesis structure repair failed; using deterministic fallback report because "
+                    "REPORT_SYNTHESIS_DETERMINISTIC_FALLBACK_ENABLED=true. expected_count=%s; "
+                    "error_summary=%s",
+                    len(normalized_results),
+                    _summarize_exception_chain(repair_exc),
+                )
+                return _build_deterministic_fallback_report(
+                    all_results=normalized_results,
+                    data_summary=normalized_data_summary,
+                    report_title=normalized_report_title,
+                    execution_errors=normalized_execution_errors,
+                    problem_reference_terms=problem_reference_terms,
+                    title_reference_terms=title_reference_terms,
+                    reflection_logic_terms=reflection_logic_terms,
+                    analysis_title_sources=normalized_results,
+                )
+
+            LOGGER.error(
+                "report synthesis output validation failed after one structure repair retry. "
+                "model_response_error=true; section_2_analysis item count mismatch; "
+                "expected_count=%s; error_summary=%s",
+                len(normalized_results),
+                _summarize_exception_chain(repair_exc),
+            )
+            raise ReportSynthesisModelError(
+                "model_response_error: report synthesis output validation failed; "
+                "section_2_analysis item count mismatch after one repair retry; "
+                f"expected_count={len(normalized_results)}; validation_error={repair_exc}"
+            ) from repair_exc
+        except Exception as repair_exc:
+            LOGGER.error(
+                "Report synthesis structure repair model call failed. expected_count=%s; error_summary=%s",
+                len(normalized_results),
+                _summarize_exception_chain(repair_exc),
+            )
+            raise ReportSynthesisModelError(
+                "model_service_error: report synthesis structure repair model call failed; "
+                f"please retry report generation. upstream_error={_summarize_exception_chain(repair_exc)}"
+            ) from repair_exc
+    except SynthesizerParseError:
         LOGGER.exception("Synthesizer response parsing or validation failed.")
         raise
 

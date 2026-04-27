@@ -75,11 +75,24 @@ BODY_FONT_NAME = "SimSun"
 BODY_EAST_ASIA_FONT = "宋体"
 BODY_FONT_SIZE_PT = 12
 BODY_LINE_SPACING = 1.5
-TOC_TITLE_TEXT = "目 录"
+TOC_TITLE_TEXT = "目录"
 TOC_FIELD_INSTRUCTION = 'TOC \\o "1-2" \\h \\z \\u'
+TOC_TITLE_VARIANTS = {"目录", "目 录", "目　录"}
 MAJOR_SECTION_PATTERN = re.compile(r"^[一二三四五六七八九十]+、")
 TASK_SECTION_PATTERN = re.compile(r"^任务\s*\d+\s*[：:]")
 ANALYSIS_SECTION_TITLE = "二、量化分析与可视化"
+SUBSECTION_NUMBER_PREFIX_PATTERN = re.compile(r"^\s*[（(]\s*[一二三四五六七八九十百千万0-9]+\s*[）)]\s*")
+CHART_NOTEBOOK_NOTE_PATTERNS = (
+    re.compile(
+        r"完整可复现代码已保留在同步生成的\s*Jupyter\s+Notebook\s*文件中[，,]\s*"
+        r"DOCX\s*正文只保留方法说明、图表和文字分析。?"
+    ),
+    re.compile(r"完整可复现代码已保留在同步生成的\s*Jupyter\s+Notebook\s*文件中。?"),
+    re.compile(r"DOCX\s*正文只保留方法说明、图表和文字分析。?"),
+    re.compile(
+        r"完整可复现代码和每个\s*cell\s*的运行输出已保留在同步生成的\s*Jupyter\s+Notebook\s*文件中。?"
+    ),
+)
 CODE_FONT_NAME = "Consolas"
 CODE_FONT_SIZE_PT = 10
 CODE_BACKGROUND_FILL = "F3F3F3"
@@ -366,6 +379,13 @@ def _set_paragraph_outline_level(paragraph: Any, outline_level: int) -> None:
     outline.set(qn("w:val"), str(outline_level))
 
 
+def _remove_page_break_before_from_properties(paragraph_properties: Any) -> None:
+    """Remove explicit page-break-before formatting from paragraph properties."""
+    page_break_before = paragraph_properties.find(qn("w:pageBreakBefore"))
+    if page_break_before is not None:
+        paragraph_properties.remove(page_break_before)
+
+
 def _ensure_heading_styles(document: Any) -> tuple[Any, Any]:
     """Ensure standard Heading 1 and Heading 2 styles exist for TOC generation."""
     heading_1_style = _get_style_by_name(document, "Heading 1")
@@ -396,6 +416,7 @@ def _ensure_heading_styles(document: Any) -> tuple[Any, Any]:
         line_spacing=1.15,
     )
     _set_style_outline_level(heading_1_style, 0)
+    _remove_page_break_before_from_properties(heading_1_style._element.get_or_add_pPr())
     _set_style_font(
         heading_2_style,
         font_name=BODY_FONT_NAME,
@@ -405,6 +426,7 @@ def _ensure_heading_styles(document: Any) -> tuple[Any, Any]:
         line_spacing=1.15,
     )
     _set_style_outline_level(heading_2_style, 1)
+    _remove_page_break_before_from_properties(heading_2_style._element.get_or_add_pPr())
     return heading_1_style, heading_2_style
 
 
@@ -494,6 +516,42 @@ def _normalize_existing_toc_fields(document: Any) -> int:
                 simple_field.set(qn("w:instr"), TOC_FIELD_INSTRUCTION)
                 toc_count += 1
     return toc_count
+
+
+def _paragraph_contains_toc_field(paragraph: Any) -> bool:
+    """Return True when a paragraph contains a TOC field instruction."""
+    for instruction in paragraph._p.iter(qn("w:instrText")):
+        if instruction.text and "TOC" in instruction.text:
+            return True
+    for simple_field in paragraph._p.iter(qn("w:fldSimple")):
+        instruction_text = simple_field.get(qn("w:instr"))
+        if instruction_text and "TOC" in instruction_text:
+            return True
+    return False
+
+
+def _is_toc_title_paragraph(paragraph: Any) -> bool:
+    """Return True when a paragraph already serves as the visible TOC title."""
+    return paragraph.text.strip() in TOC_TITLE_VARIANTS
+
+
+def _ensure_toc_title_before_existing_toc(document: Any) -> bool:
+    """Ensure a plain centered TOC title appears before a template-provided TOC field."""
+    paragraphs = list(document.paragraphs)
+    for index, paragraph in enumerate(paragraphs):
+        if not _paragraph_contains_toc_field(paragraph):
+            continue
+        if index > 0 and _is_toc_title_paragraph(paragraphs[index - 1]):
+            return False
+
+        toc_title_paragraph = document.add_paragraph()
+        toc_title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        toc_title_run = toc_title_paragraph.add_run(TOC_TITLE_TEXT)
+        _set_run_font(toc_title_run, size_pt=14, bold=True)
+        toc_title_paragraph.paragraph_format.line_spacing = BODY_LINE_SPACING
+        paragraph._p.addprevious(toc_title_paragraph._p)
+        return True
+    return False
 
 
 def _insert_toc_page(document: Any) -> None:
@@ -609,6 +667,10 @@ def _add_section_heading(document: Any, heading_text: str, *, level: int, start_
         document.add_page_break()
     heading = document.add_heading(heading_text, level=level)
     _set_paragraph_outline_level(heading, 0 if level == 1 else 1)
+    _remove_page_break_before_from_properties(heading._p.get_or_add_pPr())
+    heading.paragraph_format.keep_with_next = True
+    heading.paragraph_format.space_before = Pt(12 if level == 1 else 6)
+    heading.paragraph_format.space_after = Pt(6)
     for run in heading.runs:
         _set_run_font(
             run,
@@ -698,11 +760,44 @@ def _looks_like_time_field(field_name: str) -> bool:
     return any(token in field_name for token in ("时间", "日期", "年份", "年度", "月份", "季度", "周", "序号"))
 
 
+def _chinese_index(index: int) -> str:
+    """Return a Chinese numeral suitable for ordered subsection headings."""
+    if index <= 0:
+        raise ValueError("index must be a positive integer.")
+
+    digits = "零一二三四五六七八九"
+    if index <= 10:
+        return "十" if index == 10 else digits[index]
+    if index < 20:
+        return f"十{digits[index % 10]}"
+    if index < 100:
+        tens, ones = divmod(index, 10)
+        return f"{digits[tens]}十{digits[ones] if ones else ''}"
+    return str(index)
+
+
+def _format_subsection_heading(index: int, title: str) -> str:
+    """Add renderer-owned Chinese numbering to a section 2 subsection title."""
+    clean_title = SUBSECTION_NUMBER_PREFIX_PATTERN.sub("", title).strip()
+    if not clean_title:
+        clean_title = title.strip()
+    return f"（{_chinese_index(index)}）{clean_title}"
+
+
+def _remove_chart_notebook_notes(text: str) -> str:
+    """Remove repeated notebook boilerplate from chart subsections only."""
+    cleaned_text = text
+    for pattern in CHART_NOTEBOOK_NOTE_PATTERNS:
+        cleaned_text = pattern.sub("", cleaned_text)
+    cleaned_text = re.sub(r"[ \t]{2,}", " ", cleaned_text)
+    cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+    return cleaned_text.strip()
+
+
 def _build_analysis_method_text(result: ExecutionResult) -> str:
     """Summarize the chart method for DOCX without embedding full Python code."""
     question = result["question_zh"]
     code_text = "\n".join([result["plot_code"], result["analysis_text"]]).lower()
-    code_note = "完整可复现代码已保留在同步生成的 Jupyter Notebook 文件中，DOCX 正文只保留方法说明、图表和文字分析。"
 
     if "scatter" in code_text:
         field_names = _select_method_fields(result, max_fields=2, prefer_question=False)
@@ -710,7 +805,6 @@ def _build_analysis_method_text(result: ExecutionResult) -> str:
             return (
                 f"本图以 {field_names[0]} 为横轴、{field_names[1]} 为纵轴，"
                 "通过散点分布观察二者是否存在同步变化、离群点或区域差异。"
-                f"{code_note}"
             )
 
     if "bar(" in code_text or "barh(" in code_text or "groupby" in code_text:
@@ -719,7 +813,6 @@ def _build_analysis_method_text(result: ExecutionResult) -> str:
             return (
                 f"本图以 {field_names[0]} 为分组维度，对 {field_names[1]} 进行比较，"
                 "用于观察不同地区或类别之间的差异。"
-                f"{code_note}"
             )
 
     if "plot(" in code_text or "line" in code_text:
@@ -731,7 +824,6 @@ def _build_analysis_method_text(result: ExecutionResult) -> str:
             return (
                 f"本图按 {time_fields[0]} 展示 {metric_text} 的变化，"
                 "用于观察该指标是否存在阶段性波动或趋势。"
-                f"{code_note}"
             )
 
     field_names = _select_method_fields(result)
@@ -739,20 +831,15 @@ def _build_analysis_method_text(result: ExecutionResult) -> str:
         return (
             f"本图围绕 {field_names[0]} 与 {field_names[1]} 的关系展开分析，"
             "在完成必要的数据清洗后进行可视化展示，用于辅助识别主要分布特征和异常点。"
-            f"{code_note}"
         )
 
     if len(field_names) == 1:
         return (
             f"本图围绕“{question}”展开，重点观察 {field_names[0]} 这一指标，"
             "用于辅助识别主要分布特征和异常点。"
-            f"{code_note}"
         )
 
-    return (
-        "本图在完成必要的数据清洗后，对相关指标进行可视化展示，用于辅助识别主要分布特征和异常点。"
-        f"{code_note}"
-    )
+    return "本图在完成必要的数据清洗后，对相关指标进行可视化展示，用于辅助识别主要分布特征和异常点。"
 
 
 def _build_quant_analysis_section(
@@ -765,7 +852,7 @@ def _build_quant_analysis_section(
         document,
         ANALYSIS_SECTION_TITLE,
         level=1,
-        start_on_new_page=True,
+        start_on_new_page=False,
     )
 
     analysis_sections = report_data["section_2_analysis"]
@@ -773,7 +860,8 @@ def _build_quant_analysis_section(
         raise ValueError("section_2_analysis length must match the number of task results.")
 
     for index, (section_item, result) in enumerate(zip(analysis_sections, results), start=1):
-        sub_title = section_item["sub_title"].strip() or f"任务 {index}：{result['question_zh']}"
+        raw_sub_title = section_item["sub_title"].strip() or f"任务 {index}：{result['question_zh']}"
+        sub_title = _format_subsection_heading(index, raw_sub_title)
         _add_section_heading(
             document,
             sub_title,
@@ -782,11 +870,14 @@ def _build_quant_analysis_section(
         )
         _add_body_paragraphs(document, f"研究问题：{result['question_zh']}")
         _add_label_paragraph(document, "分析方法：")
-        _add_body_paragraphs(document, _build_analysis_method_text(result))
+        _add_body_paragraphs(document, _remove_chart_notebook_notes(_build_analysis_method_text(result)))
         _add_label_paragraph(document, "可视化图表：")
         _add_figure(document, result["image_path"])
         _add_label_paragraph(document, "图表分析：")
-        _add_body_paragraphs(document, section_item["content"] or result["analysis_text"])
+        _add_body_paragraphs(
+            document,
+            _remove_chart_notebook_notes(section_item["content"] or result["analysis_text"]),
+        )
 
 
 def _rebuild_report_body(
@@ -803,6 +894,7 @@ def _rebuild_report_body(
     existing_toc_count = _normalize_existing_toc_fields(document)
     if existing_toc_count > 0:
         LOGGER.info("检测到模板已有 %s 个目录字段，复用并规范目录指令。", existing_toc_count)
+        _ensure_toc_title_before_existing_toc(document)
     else:
         _insert_toc_page(document)
 
@@ -820,7 +912,7 @@ def _rebuild_report_body(
         document,
         report_data["section_3_mechanism"]["title"],
         level=1,
-        start_on_new_page=True,
+        start_on_new_page=False,
     )
     _add_body_paragraphs(document, report_data["section_3_mechanism"]["content"])
 
@@ -829,7 +921,7 @@ def _rebuild_report_body(
             document,
             reflection_item["sub_title"],
             level=1,
-            start_on_new_page=True,
+            start_on_new_page=False,
         )
         _add_body_paragraphs(document, reflection_item["content"])
 

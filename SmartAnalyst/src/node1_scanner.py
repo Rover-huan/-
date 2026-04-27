@@ -51,7 +51,7 @@ LOGGER = logging.getLogger(__name__)
 MODULE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = MODULE_DIR.parent
 ENV_PATH = PROJECT_ROOT / ".env"
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_MODEL = "deepseek-v4-flash"
 
 
 class DatasetMeta(TypedDict):

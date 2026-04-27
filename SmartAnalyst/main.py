@@ -18,7 +18,14 @@ except ImportError:  # pragma: no cover - optional dependency guard
         """Fallback no-op when python-dotenv is unavailable."""
         return False
 
-from src import node1_scanner, node2_planner, node3_5_synthesizer, node3_executor, node4_renderer
+from src import (
+    node1_scanner,
+    node2_planner,
+    node3_5_synthesizer,
+    node3_6_polisher,
+    node3_executor,
+    node4_renderer,
+)
 from service.config import get_settings
 from src.tabular_loader import load_excel_dataset
 
@@ -40,6 +47,7 @@ REPORT_TITLE = "SmartAnalyst Economist Report"
 SUPPORTED_DATA_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 CSV_ENCODINGS = ("utf-8", "gbk", "latin1")
 MAX_DATASETS = 5
+MIN_SUCCESSFUL_CANDIDATE_CHARTS = 3
 
 
 def _announce_step(step_number: str, description: str) -> None:
@@ -538,6 +546,7 @@ def run_analysis_phase(
         )
 
     results_by_index: dict[int, dict[str, Any]] = {}
+    failed_by_index: dict[int, dict[str, Any]] = {}
     futures: dict[Future[dict[str, Any]], dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=chart_concurrency, thread_name_prefix="chart-gen") as executor:
         next_entry_index = 0
@@ -586,20 +595,31 @@ def run_analysis_phase(
                     try:
                         execution_result = future.result()
                     except Exception as exc:
-                        for pending_future in futures:
-                            pending_future.cancel()
+                        failure_payload = {
+                            "task_id": task_id,
+                            "index": index,
+                            "total": total_tasks,
+                            "duration_ms": elapsed_ms(float(entry["started_at"])),
+                            "error_type": type(exc).__name__,
+                            "error_message": str(exc),
+                            "level": "warning",
+                        }
+                        failed_by_index[index] = failure_payload
+                        LOGGER.warning(
+                            "Candidate chart generation failed for task %s/%s with task_id=%s: %s",
+                            index,
+                            total_tasks,
+                            task_id,
+                            exc,
+                            exc_info=True,
+                        )
                         emit_progress(
                             "analysis.chart_failed",
                             f"Candidate chart generation failed for task {task_id}.",
-                            {
-                                "task_id": task_id,
-                                "index": index,
-                                "total": total_tasks,
-                                "duration_ms": elapsed_ms(float(entry["started_at"])),
-                                "error_type": type(exc).__name__,
-                            },
+                            failure_payload,
                         )
-                        raise
+                        submit_next_chart()
+                        continue
 
                     results_by_index[index] = execution_result
                     emit_progress(
@@ -617,25 +637,62 @@ def run_analysis_phase(
             executor.shutdown(wait=True, cancel_futures=True)
             raise
 
+    minimum_required = min(MIN_SUCCESSFUL_CANDIDATE_CHARTS, total_tasks) if total_tasks else 0
     results = [
         results_by_index[index]
         for index in sorted(results_by_index)
     ]
-    if len(results) != total_tasks:
-        missing_indexes = sorted(set(range(1, total_tasks + 1)).difference(results_by_index))
-        raise RuntimeError(f"Missing candidate chart results for task indexes: {missing_indexes}")
+    successful_task_plans = [
+        task_entries[index - 1]["task_plan"]
+        for index in sorted(results_by_index)
+    ]
+    failed_count = len(failed_by_index)
+    success_count = len(results)
+    if success_count < minimum_required:
+        failed_task_ids = [
+            int(failed_by_index[index]["task_id"])
+            for index in sorted(failed_by_index)
+        ]
+        raise node3_executor.ExecutorError(
+            "Candidate chart generation produced too few successful charts: "
+            f"success_count={success_count}, minimum_required={minimum_required}, "
+            f"failed_count={failed_count}, failed_task_ids={failed_task_ids}"
+        )
+
+    if failed_count:
+        emit_progress(
+            "analysis.chart_partial_success",
+            "Analysis continued with successful candidate charts after some chart failures.",
+            {
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "minimum_required": minimum_required,
+                "total": total_tasks,
+                "failed_task_ids": [
+                    int(failed_by_index[index]["task_id"])
+                    for index in sorted(failed_by_index)
+                ],
+                "level": "warning",
+            },
+        )
 
     data_summary = _attach_preprocessing_payload(data_summary, results)
     emit_progress(
         "analysis.phase_completed",
         "Analysis phase pipeline completed.",
-        {"duration_ms": elapsed_ms(phase_started_at), "task_count": len(results)},
+        {
+            "duration_ms": elapsed_ms(phase_started_at),
+            "task_count": len(results),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "minimum_required": minimum_required,
+        },
     )
 
     return {
         "dataset_meta": dataset_meta,
         "dataset_paths": [path.as_posix() for path in normalized_paths],
-        "task_plans": task_plans,
+        "task_plans": successful_task_plans,
         "report_title": report_title,
         "results": results,
         "data_summary": data_summary,
@@ -654,32 +711,47 @@ def run_render_phase(
     resolved_output_dir = Path(output_dir).resolve()
     resolved_output_dir.mkdir(parents=True, exist_ok=True)
 
-    report_text = synthesize_economist_report(execution_results, data_summary, report_title)
-    render_results = _build_render_results(task_plans, execution_results, report_text)
+    draft_report_text = synthesize_economist_report(execution_results, data_summary, report_title)
+    docx_report_text = draft_report_text
+    try:
+        docx_report_text = node3_6_polisher.polish_report_text(draft_report_text)
+    except Exception as exc:
+        LOGGER.warning(
+            "DeepSeek report polish failed; falling back to draft report_text. error_type=%s",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        docx_report_text = draft_report_text
+
+    draft_render_results = _build_render_results(task_plans, execution_results, draft_report_text)
+    if docx_report_text is draft_report_text:
+        docx_render_results = draft_render_results
+    else:
+        docx_render_results = _build_render_results(task_plans, execution_results, docx_report_text)
 
     report_artifacts = node4_renderer.render_report(
-        render_results,
-        report_text,
+        docx_render_results,
+        docx_report_text,
         data_summary,
         report_title or REPORT_TITLE,
         output_dir=resolved_output_dir,
     )
     notebook_path = node4_renderer.render_notebook(
-        render_results,
-        report_text,
+        draft_render_results,
+        draft_report_text,
         data_summary,
         report_title or REPORT_TITLE,
         output_dir=resolved_output_dir,
     )
     cleaning_summary_path = node4_renderer.render_data_summary(
-        render_results,
+        draft_render_results,
         data_summary,
         output_dir=resolved_output_dir,
     )
 
     return {
-        "render_results": render_results,
-        "report_text": report_text,
+        "render_results": docx_render_results,
+        "report_text": docx_report_text,
         "artifacts": {
             "docx_path": report_artifacts["docx_path"],
             "pdf_path": report_artifacts["pdf_path"],

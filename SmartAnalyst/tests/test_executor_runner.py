@@ -8,6 +8,7 @@ import pytest
 from src.node3_executor import (
     ExecutorError,
     execute_task,
+    _build_initial_prompt,
     _build_repair_prompt,
     _build_safe_debug_snapshot,
     _execute_generated_code_subprocess,
@@ -202,6 +203,66 @@ def test_execute_task_repairs_disallowed_import_and_returns_import_free_code(tmp
     assert "Disallowed import on line 1: import os" in prompts[1]
     assert "import " not in result["code_snippet"]
     assert "from " not in result["code_snippet"]
+    assert result["analysis_text"] == "ok"
+
+
+def test_initial_prompt_requires_literal_dataset_access(tmp_path):
+    prompt = _build_initial_prompt(
+        datasets=_datasets(),
+        task_plan=_task_plan(),
+        output_image_path=str(tmp_path / "chart.png"),
+    )
+
+    assert "df = datasets['精确文件名'].copy()" in prompt
+    assert "df1 = datasets['文件名1'].copy()" in prompt
+    assert "df2 = datasets['文件名2'].copy()" in prompt
+    assert "Do not use `datasets.get(...)`" in prompt
+    assert "Do not use variable lookups such as `datasets[name]`" in prompt
+    assert "Do not invent the main data with `pd.DataFrame(...)`" in prompt
+    assert "Do not assume a global `df` already exists" in prompt
+    assert "simple fallback chart from real columns" in prompt
+
+
+def test_repair_prompt_contains_missing_dataset_access_instructions(tmp_path):
+    prompt = _build_repair_prompt(
+        datasets=_datasets(),
+        task_plan=_task_plan(),
+        output_image_path=str(tmp_path / "chart.png"),
+        error_traceback="ExecutorError: Generated code is missing required datasets access.",
+        previous_code="df = pd.DataFrame({'x': [1], 'y': [2]})",
+    )
+
+    assert "Generated code is missing required datasets access" in prompt
+    assert "this is a hard repair target" in prompt
+    assert "Insert literal `datasets` access lines" in prompt
+    assert "df = datasets['xxx.xlsx'].copy()" in prompt
+    assert "real file names from `required_datasets`" in prompt
+    assert "`datasets.get(...)`" in prompt
+    assert "`datasets[name]`" in prompt
+    assert "`pd.DataFrame(...)`" in prompt
+
+
+def test_execute_task_repairs_missing_dataset_access(tmp_path, monkeypatch):
+    missing_dataset_access_code = VALID_CODE.replace(
+        "df = datasets['sample.csv'].copy()",
+        "df = pd.DataFrame({'x': [1, 2, 3], 'y': [2, 4, 6], 'z': [3, 2, 1]})",
+    )
+    responses = iter([missing_dataset_access_code, VALID_CODE])
+    prompts = []
+
+    def fake_llm_caller(*, prompt, system_prompt):
+        prompts.append(prompt)
+        return next(responses)
+
+    monkeypatch.setattr("src.node3_executor.llm_caller", fake_llm_caller)
+
+    result = execute_task(datasets=_datasets(), task_plan=_task_plan(), output_dir=tmp_path)
+
+    assert len(prompts) == 2
+    assert "Generated code is missing required datasets access" in prompts[1]
+    assert "df = datasets['xxx.xlsx'].copy()" in prompts[1]
+    assert "pd.DataFrame" not in result["code_snippet"]
+    assert "df = datasets['sample.csv'].copy()" in result["code_snippet"]
     assert result["analysis_text"] == "ok"
 
 

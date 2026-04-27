@@ -93,6 +93,13 @@ class Settings:
     runner_timeout_seconds: int
     chart_generation_concurrency: int
     llm_daily_budget_limit: int
+    enable_deepseek_polish: bool
+    deepseek_polish_api_key: str | None
+    deepseek_polish_base_url: str
+    deepseek_polish_model: str
+    deepseek_polish_timeout_seconds: int
+    deepseek_polish_max_input_chars: int
+    report_synthesis_deterministic_fallback_enabled: bool
     max_daily_jobs_per_user: int
     max_daily_upload_bytes_per_user: int
     register_rate_limit_per_hour_ip: int
@@ -198,6 +205,18 @@ def get_settings() -> Settings:
         runner_timeout_seconds=_read_int("RUNNER_TIMEOUT_SECONDS", 240),
         chart_generation_concurrency=chart_generation_concurrency,
         llm_daily_budget_limit=_read_int("LLM_DAILY_BUDGET_LIMIT", 0),
+        enable_deepseek_polish=_read_bool("ENABLE_DEEPSEEK_POLISH", False),
+        deepseek_polish_api_key=_read_str("DEEPSEEK_POLISH_API_KEY"),
+        deepseek_polish_base_url=_read_str("DEEPSEEK_POLISH_BASE_URL", "https://api.deepseek.com/v1")
+        or "https://api.deepseek.com/v1",
+        deepseek_polish_model=_read_str("DEEPSEEK_POLISH_MODEL", "deepseek-v4-flash")
+        or "deepseek-v4-flash",
+        deepseek_polish_timeout_seconds=_read_int("DEEPSEEK_POLISH_TIMEOUT_SECONDS", 180),
+        deepseek_polish_max_input_chars=_read_int("DEEPSEEK_POLISH_MAX_INPUT_CHARS", 120000),
+        report_synthesis_deterministic_fallback_enabled=_read_bool(
+            "REPORT_SYNTHESIS_DETERMINISTIC_FALLBACK_ENABLED",
+            False,
+        ),
         max_daily_jobs_per_user=_read_int("MAX_DAILY_JOBS_PER_USER", 10),
         max_daily_upload_bytes_per_user=_read_int("MAX_DAILY_UPLOAD_BYTES_PER_USER", 250 * 1024 * 1024),
         register_rate_limit_per_hour_ip=_read_int("REGISTER_RATE_LIMIT_PER_HOUR_IP", 10),

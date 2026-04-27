@@ -86,10 +86,10 @@ const STAGE_COPY: Record<ProgressModuleId | WorkflowStep, StageCopy> = {
   },
   export: {
     workflowLabel: '下载报告',
-    estimatedDuration: '预计 30 秒左右',
-    pendingHint: '选择候选图后，系统将生成最终报告，预计 30 秒左右。',
-    runningStatus: '生成中 · 预计 30 秒左右',
-    runningHint: '系统将根据你选择的图表撰写正文，并生成最终报告。',
+    estimatedDuration: '预计 3—5 分钟',
+    pendingHint: '选择候选图后，系统将调用高质量模型撰写并优化最终报告，预计需要 3—5 分钟。',
+    runningStatus: '生成中 · 预计 3—5 分钟',
+    runningHint: '最终报告生成中，系统正在进行正文精修与文档导出，请耐心等待。',
     completedHint: '报告已生成，可以下载。',
   },
   received: {
@@ -114,11 +114,11 @@ const STAGE_COPY: Record<ProgressModuleId | WorkflowStep, StageCopy> = {
     completedHint: '候选图选择已提交。',
   },
   report: {
-    title: '撰写并导出报告',
-    estimatedDuration: '预计 30 秒左右',
-    pendingHint: '选择候选图后，系统将生成最终报告，预计 30 秒左右。',
-    runningStatus: '进行中 · 预计 30 秒左右',
-    runningHint: '系统将根据你选择的图表撰写正文，并生成最终报告。',
+    title: '撰写并导出最终报告',
+    estimatedDuration: '预计 3—5 分钟',
+    pendingHint: '选择候选图后，系统将调用高质量模型撰写并优化最终报告，预计需要 3—5 分钟。',
+    runningStatus: '进行中 · 预计 3—5 分钟',
+    runningHint: '最终报告生成中，系统正在进行正文精修与文档导出，请耐心等待。',
     completedHint: '报告与产物已生成，可以直接下载。',
   },
 };
@@ -515,7 +515,7 @@ function getProgressBrief(module: ProgressModule) {
     received: '文件已进入分析队列。',
     planning: '读取、清洗数据并生成候选图表。',
     charts: '等待你选择写入报告的图表。',
-    report: '根据选择撰写正文并导出报告。',
+    report: '正在进行最终报告撰写与正文精修，系统将调用高质量模型优化报告表达，预计需要 3—5 分钟。',
   };
   return briefs[module.id];
 }
@@ -634,7 +634,7 @@ function getActiveJobHint(job: JobSummaryResponse) {
     return '正在分析数据并生成候选图表';
   }
   if (job.status === 'queued_render' || job.status === 'rendering') {
-    return '正在生成报告产物';
+    return '最终报告生成中，系统正在进行正文精修与文档导出';
   }
   if (job.status === 'awaiting_selection') {
     return '候选图已生成，等待勾选图表';
@@ -694,7 +694,7 @@ function getCurrentStageStatusText(job: JobSummaryResponse | null) {
     return '等待你选择';
   }
   if (job.status === 'queued_render' || job.status === 'rendering') {
-    return '正在生成报告';
+    return '最终报告生成中 · 预计 3—5 分钟';
   }
   if (job.status === 'completed') {
     return '已完成';
@@ -2416,7 +2416,7 @@ export function SmartAnalystApp() {
           events={jobs.events}
           tasks={jobs.tasks}
           title="正在生成最终报告"
-          description="系统已收到你的选图结果，正在进行综合撰写、文档渲染和产物打包。"
+          description="系统已收到你的选图结果，正在调用高质量模型撰写并优化最终报告，同时进行文档导出，预计需要 3—5 分钟，请耐心等待。"
           alert={jobs.jobAlert}
         />
       );
